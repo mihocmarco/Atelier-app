@@ -4,8 +4,8 @@
   "description": "Proiectele mele de electronică și Arduino: poze, detalii, cod și video.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#12181a",
-  "theme_color": "#12181a",
+  "background_color": "#060a0f",
+  "theme_color": "#060a0f",
   "icons": [
     {
       "src": "/icon-192.png",

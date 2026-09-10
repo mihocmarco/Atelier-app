@@ -2,11 +2,11 @@ import React, { useState, useEffect, useRef } from "react";
 import {
   Cpu, Plus, X, Trash2, Camera, Code2, Save, Pencil,
   ChevronLeft, Search, ImageOff, Copy, Check, CircuitBoard,
-  LogOut, Video, Film,
+  LogOut, Video, Film, Images,
 } from "lucide-react";
 import { auth, db } from "./firebase.js";
 import {
-  onAuthStateChanged, signInWithEmailAndPassword, signOut,
+  onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut,
 } from "firebase/auth";
 import {
   collection, query, where, onSnapshot, addDoc, updateDoc, deleteDoc,
@@ -16,7 +16,7 @@ import { uploadToCloudinary } from "./cloudinary.js";
 
 const STATUS = [
   { id: "idee", label: "Idee", color: "var(--amber)" },
-  { id: "lucru", label: "În lucru", color: "var(--copper-bright)" },
+  { id: "lucru", label: "În lucru", color: "var(--accent-bright)" },
   { id: "gata", label: "Finalizat", color: "var(--green)" },
   { id: "arhiva", label: "Arhivat", color: "var(--text-muted)" },
 ];
@@ -52,18 +52,34 @@ function resizeImageToBlob(file, maxDim = 1100, quality = 0.75) {
 
 // ---------------- Login screen ----------------
 function LoginScreen() {
+  const [mode, setMode] = useState("login"); // "login" | "signup"
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
-  async function handleLogin() {
+  async function handleSubmit() {
     setBusy(true);
     setError("");
     try {
-      await signInWithEmailAndPassword(auth, email.trim(), password);
+      if (mode === "login") {
+        await signInWithEmailAndPassword(auth, email.trim(), password);
+      } else {
+        if (password.length < 6) {
+          setError("Parola trebuie să aibă cel puțin 6 caractere.");
+          setBusy(false);
+          return;
+        }
+        await createUserWithEmailAndPassword(auth, email.trim(), password);
+      }
     } catch (e) {
-      setError("Autentificare eșuată. Verifică email-ul și parola.");
+      if (mode === "signup" && e.code === "auth/email-already-in-use") {
+        setError("Există deja un cont cu acest email. Încearcă să te loghezi.");
+      } else if (mode === "login") {
+        setError("Autentificare eșuată. Verifică email-ul și parola.");
+      } else {
+        setError("Nu am putut crea contul. Verifică email-ul și încearcă din nou.");
+      }
     } finally {
       setBusy(false);
     }
@@ -73,7 +89,7 @@ function LoginScreen() {
     <div className="login-screen">
       <div className="login-card">
         <div className="brand"><CircuitBoard size={22} /> Atelier</div>
-        <p className="hint">autentificare</p>
+        <p className="hint">{mode === "login" ? "autentificare" : "cont nou"}</p>
         {error && <div className="error-msg">{error}</div>}
         <div className="field">
           <label>Email</label>
@@ -85,12 +101,16 @@ function LoginScreen() {
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleLogin()}
+            onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
           />
         </div>
-        <button className="primary-btn" style={{ width: "100%", justifyContent: "center" }} disabled={busy} onClick={handleLogin}>
-          {busy ? "se conectează..." : "Intră"}
+        <button className="primary-btn" style={{ width: "100%", justifyContent: "center" }} disabled={busy} onClick={handleSubmit}>
+          {busy ? "se procesează..." : mode === "login" ? "Intră" : "Creează cont"}
         </button>
+        <p className="hint" style={{ marginTop: 14, marginBottom: 0, textAlign: "center", cursor: "pointer" }}
+          onClick={() => { setMode(mode === "login" ? "signup" : "login"); setError(""); }}>
+          {mode === "login" ? "Nu ai cont? Creează unul" : "Ai deja cont? Intră"}
+        </p>
       </div>
     </div>
   );
@@ -109,8 +129,10 @@ export default function App() {
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
-  const photoInputRef = useRef(null);
-  const videoInputRef = useRef(null);
+  const photoCaptureRef = useRef(null);
+  const videoCaptureRef = useRef(null);
+  const galleryRef = useRef(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   useEffect(() => onAuthStateChanged(auth, (u) => setUser(u)), []);
 
@@ -144,45 +166,42 @@ export default function App() {
   function openEdit(p) { setDraft({ ...p }); setView("edit"); }
   function openDetail(id) { setSelectedId(id); setView("detail"); }
 
-  async function handlePhotoFiles(fileList) {
+  async function handleMediaFiles(fileList) {
     const files = Array.from(fileList).slice(0, 6);
     setUploading(true);
     setError("");
+    const newPhotos = [];
+    const newVideos = [];
     try {
-      const results = [];
       for (const f of files) {
-        const blob = await resizeImageToBlob(f);
-        const { url, publicId } = await uploadToCloudinary(blob, "image");
-        results.push({ url, publicId });
+        if (f.type.startsWith("image/")) {
+          const blob = await resizeImageToBlob(f);
+          const { url, publicId } = await uploadToCloudinary(blob, "image");
+          newPhotos.push({ url, publicId });
+        } else if (f.type.startsWith("video/")) {
+          if (f.size > 80 * 1024 * 1024) {
+            setError(`"${f.name}" e prea mare (peste 80MB) — comprimă-l înainte de încărcare.`);
+            continue;
+          }
+          const { url, publicId } = await uploadToCloudinary(f, "video");
+          newVideos.push({ url, publicId, name: f.name });
+        }
       }
-      setDraft((d) => ({ ...d, photos: [...d.photos, ...results] }));
+      setDraft((d) => ({
+        ...d,
+        photos: [...d.photos, ...newPhotos],
+        videos: [...d.videos, ...newVideos],
+      }));
     } catch (e) {
-      setError("Încărcarea pozei a eșuat. Verifică upload preset-ul din Cloudinary și încearcă din nou.");
+      setError("Încărcarea a eșuat. Verifică upload preset-ul din Cloudinary și încearcă din nou.");
     } finally {
       setUploading(false);
     }
   }
 
-  async function handleVideoFiles(fileList) {
-    const files = Array.from(fileList).slice(0, 3);
-    setUploading(true);
-    setError("");
-    try {
-      const items = [];
-      for (const f of files) {
-        if (f.size > 80 * 1024 * 1024) {
-          setError(`"${f.name}" e prea mare (peste 80MB) — comprimă-l înainte de încărcare.`);
-          continue;
-        }
-        const { url, publicId } = await uploadToCloudinary(f, "video");
-        items.push({ url, publicId, name: f.name });
-      }
-      setDraft((d) => ({ ...d, videos: [...d.videos, ...items] }));
-    } catch (e) {
-      setError("Încărcarea videoclipului a eșuat. Verifică upload preset-ul din Cloudinary și încearcă din nou.");
-    } finally {
-      setUploading(false);
-    }
+  function pickOption(ref) {
+    setPickerOpen(false);
+    ref.current?.click();
   }
 
   function removePhoto(idx) {
@@ -403,38 +422,50 @@ export default function App() {
           </div>
 
           <div className="field">
-            <label>Poze</label>
-            <div className="photo-upload-row">
-              {draft.photos.map((ph, i) => (
-                <div className="photo-thumb" key={i}>
-                  <img src={ph.url} alt={`poza ${i + 1}`} />
-                  <button onClick={() => removePhoto(i)}><X size={11} /></button>
-                </div>
-              ))}
-              <div className={"upload-tile" + (uploading ? " uploading" : "")} onClick={() => photoInputRef.current?.click()}>
+            <label>Poze și video</label>
+            {(draft.photos.length > 0 || draft.videos.length > 0) && (
+              <div className="photo-upload-row" style={{ marginBottom: 10 }}>
+                {draft.photos.map((ph, i) => (
+                  <div className="photo-thumb" key={"p" + i}>
+                    <img src={ph.url} alt={`poza ${i + 1}`} />
+                    <button onClick={() => removePhoto(i)}><X size={11} /></button>
+                  </div>
+                ))}
+                {draft.videos.map((v, i) => (
+                  <div className="photo-thumb" key={"v" + i} style={{ display: "flex", alignItems: "center", justifyContent: "center", background: "var(--panel-raised)" }}>
+                    <Film size={20} color="var(--text-muted)" />
+                    <button onClick={() => removeVideo(i)}><X size={11} /></button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="media-add-wrap">
+              <div className={"upload-tile" + (uploading ? " uploading" : "")} onClick={() => setPickerOpen((v) => !v)}>
                 <Camera size={18} />
               </div>
-              <input ref={photoInputRef} type="file" accept="image/*" multiple style={{ display: "none" }}
-                onChange={(e) => e.target.files && handlePhotoFiles(e.target.files)} />
-            </div>
-          </div>
-
-          <div className="field">
-            <label>Video</label>
-            <div className="video-upload-list">
-              {draft.videos.map((v, i) => (
-                <div className="video-thumb" key={i}>
-                  <Video size={14} />
-                  <span>{v.name || `video ${i + 1}`}</span>
-                  <button onClick={() => removeVideo(i)}><X size={13} /></button>
-                </div>
-              ))}
-              <div className={"upload-tile" + (uploading ? " uploading" : "")} style={{ width: "100%", height: 44, flexDirection: "row", gap: 6 }}
-                onClick={() => videoInputRef.current?.click()}>
-                <Video size={16} /> adaugă video
-              </div>
-              <input ref={videoInputRef} type="file" accept="video/*" multiple style={{ display: "none" }}
-                onChange={(e) => e.target.files && handleVideoFiles(e.target.files)} />
+              {pickerOpen && (
+                <>
+                  <div className="media-picker-backdrop" onClick={() => setPickerOpen(false)} />
+                  <div className="media-picker-popup">
+                    <div className="media-picker-option" onClick={() => pickOption(photoCaptureRef)}>
+                      <Camera size={16} /> Fă poză
+                    </div>
+                    <div className="media-picker-option" onClick={() => pickOption(videoCaptureRef)}>
+                      <Video size={16} /> Filmează
+                    </div>
+                    <div className="media-picker-option" onClick={() => pickOption(galleryRef)}>
+                      <Images size={16} /> Din galerie
+                    </div>
+                  </div>
+                </>
+              )}
+              <input ref={photoCaptureRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }}
+                onChange={(e) => e.target.files && handleMediaFiles(e.target.files)} />
+              <input ref={videoCaptureRef} type="file" accept="video/*" capture="environment" style={{ display: "none" }}
+                onChange={(e) => e.target.files && handleMediaFiles(e.target.files)} />
+              <input ref={galleryRef} type="file" accept="image/*,video/*" multiple style={{ display: "none" }}
+                onChange={(e) => e.target.files && handleMediaFiles(e.target.files)} />
             </div>
             {uploading && <p className="upload-progress">se încarcă...</p>}
           </div>

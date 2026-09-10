@@ -13,7 +13,9 @@ Stack: React + Vite, Firebase (Auth + Firestore + Storage), deploy pe Vercel sau
 1. Mergi pe [console.firebase.google.com](https://console.firebase.google.com) și creează un proiect nou.
 2. **Authentication** → Sign-in method → activează **Email/Password**.
    În tab-ul **Users**, adaugă manual un utilizator (email + parolă) — acesta ești tu.
-   Aplicația nu are formular de "creare cont" intenționat, ca să rămână doar a ta.
+   Aplicația are și un ecran de "Creează cont" — oricine cu linkul își poate face
+   propriul cont, iar proiectele fiecărui cont sunt complet separate (fiecare vede
+   doar ce a adăugat el, datorită regulilor din `firestore.rules`).
 3. **Firestore Database** → Create database → pornește în modul **production**.
 4. Deschide **Project settings** (rotița din stânga sus) → sub "Your apps" apasă
    iconița web `</>` → înregistrează o aplicație web → copiază obiectul `firebaseConfig`.
